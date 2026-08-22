@@ -2,6 +2,10 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { extractRucFromClaveAcceso } from './utils/clave-acceso.utils';
+import {
+  calcularDiasHabilesEcuador,
+  siguienteDiaHabil,
+} from './utils/feriados.utils';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { DatabaseService } from '../../database';
@@ -59,8 +63,9 @@ export class SriService {
    * Emisión de facturas.
    *
    * Desde el 01/01/2026, la transmisión en tiempo real es obligatoria
-   * (Resolución NAC-DGERCGC26-00000027). Por defecto, SRI_EMISION_ASYNC
-   * debe ser 'false' para cumplir con emisión síncrona.
+   * (Resoluciones NAC-DGERCGC25-00000014 y NAC-DGERCGC25-00000017).
+   * Por defecto, SRI_EMISION_ASYNC es 'false' para cumplir con emisión
+   * síncrona (transmisión inmediata).
    *
    * El modo encolado (SRI_EMISION_ASYNC='true') se mantiene como
    * contingencia para cuando el SRI está caído. En ese caso, los
@@ -69,7 +74,7 @@ export class SriService {
    */
 
   async emitirFactura(dto: CreateFacturaDto): Promise<EmisionEncoladaResponseDto | FacturaResponseDto> {
-    const isAsync = this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
+    const isAsync = this.configService.get<string>('SRI_EMISION_ASYNC') === 'true';
     if (!isAsync) {
       return this.facturaService.emitirFactura(dto);
     }
@@ -101,7 +106,7 @@ export class SriService {
   async emitirNotaCredito(
     dto: CreateNotaCreditoDto,
   ): Promise<EmisionEncoladaResponseDto | NotaCreditoResponseDto> {
-    const isAsync = this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
+    const isAsync = this.configService.get<string>('SRI_EMISION_ASYNC') === 'true';
     if (!isAsync) {
       return this.notaCreditoService.emitirNotaCredito(dto);
     }
@@ -121,7 +126,7 @@ export class SriService {
   async emitirNotaDebito(
     dto: CreateNotaDebitoDto,
   ): Promise<EmisionEncoladaResponseDto | NotaDebitoResponseDto> {
-    const isAsync = this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
+    const isAsync = this.configService.get<string>('SRI_EMISION_ASYNC') === 'true';
     if (!isAsync) {
       return this.notaDebitoService.emitirNotaDebito(dto);
     }
@@ -141,7 +146,7 @@ export class SriService {
   async emitirRetencion(
     dto: CreateRetencionDto,
   ): Promise<EmisionEncoladaResponseDto | RetencionResponseDto> {
-    const isAsync = this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
+    const isAsync = this.configService.get<string>('SRI_EMISION_ASYNC') === 'true';
     if (!isAsync) {
       return this.retencionService.emitirRetencion(dto);
     }
@@ -161,7 +166,7 @@ export class SriService {
   async emitirGuiaRemision(
     dto: CreateGuiaRemisionDto,
   ): Promise<EmisionEncoladaResponseDto | GuiaRemisionResponseDto> {
-    const isAsync = this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
+    const isAsync = this.configService.get<string>('SRI_EMISION_ASYNC') === 'true';
     if (!isAsync) {
       return this.guiaRemisionService.emitirGuiaRemision(dto);
     }
@@ -484,26 +489,32 @@ export class SriService {
     }
 
     // #4: Validar plazo de anulación en línea (hasta día 7 del mes siguiente a la emisión)
-    const fechaEmision = new Date(comprobante.fecha_emision);
-    const ahora = new Date();
-    const primerDiaMesSiguiente = new Date(
-      fechaEmision.getFullYear(),
-      fechaEmision.getMonth() + 1,
-      1,
-    );
-    const dia7MesSiguiente = new Date(
-      fechaEmision.getFullYear(),
-      fechaEmision.getMonth() + 1,
-      7,
-      23, 59, 59, 999,
-    );
+    // Excepción: retenciones ISD no tienen plazo de anulación (Art. 26 Reglamento ISD)
+    const esRetencionISD =
+      comprobante.tipo_comprobante === '07' &&
+      await this.esComprobanteRetencionISD(comprobante.id as string);
 
-    if (ahora > dia7MesSiguiente) {
-      throw new BadRequestException(
-        `El plazo para anular en línea ha expirado. Solo se puede anular hasta el día 7 del mes siguiente a la emisión ` +
-          `(límite: ${dia7MesSiguiente.toLocaleDateString('es-EC')}). ` +
-          `Fecha de emisión del comprobante: ${fechaEmision.toLocaleDateString('es-EC')}.`,
+    if (!esRetencionISD) {
+      const fechaEmision = new Date(comprobante.fecha_emision);
+      const ahora = new Date();
+      const dia7MesSiguiente = new Date(
+        fechaEmision.getFullYear(),
+        fechaEmision.getMonth() + 1,
+        7,
+        23, 59, 59, 999,
       );
+
+      // NAC-DGERCGC25-00000017: si el día 7 cae en fin de semana o feriado,
+      // el plazo se extiende al siguiente día hábil
+      const plazoFinal = siguienteDiaHabil(dia7MesSiguiente);
+
+      if (ahora > plazoFinal) {
+        throw new BadRequestException(
+          `El plazo para anular en línea ha expirado. Solo se puede anular hasta el día 7 del mes siguiente a la emisión ` +
+            `(límite: ${plazoFinal.toLocaleDateString('es-EC')}). ` +
+            `Fecha de emisión del comprobante: ${fechaEmision.toLocaleDateString('es-EC')}.`,
+        );
+      }
     }
 
     // Actualizar estado a ANULADO
@@ -1009,6 +1020,51 @@ export class SriService {
       );
     }
 
+    // NAC-DGERCGC25-00000017: Auto-anulación sin aceptación del receptor
+    // cuando el receptor es del exterior (tipo identificación '08') o fallecido.
+    // En estos casos, la anulación procede automáticamente al ingresar la solicitud.
+    const esAutoAnulable = await this.esAnulacionAutomatica(comprobante);
+
+    if (esAutoAnulable) {
+      // Anular directamente sin crear solicitud pendiente
+      await this.repository.updateComprobante(comprobante.id as string, {
+        estado: 'ANULADO',
+        estado_sri: 'ANULADO',
+      });
+
+      // Registrar la solicitud como ACEPTADA automáticamente
+      const result = await this.db.query(
+        `INSERT INTO anulacion_solicitudes (comprobante_clave_acceso, tipo_comprobante, emisor_ruc, receptor_identificacion, motivo_solicitud, estado, respuesta_motivo, respondido_at)
+         VALUES ($1, $2, $3, $4, $5, 'ACEPTADA', 'Anulación automática - receptor exterior/fallecido', NOW())
+         RETURNING id, estado`,
+        [
+          claveAcceso,
+          comprobante.tipo_comprobante,
+          extractRucFromClaveAcceso(claveAcceso),
+          comprobante.receptor_identificacion || '',
+          motivo || null,
+        ],
+      );
+
+      const solicitud = result.rows[0];
+      this.logger.log(
+        `Auto-anulación procesada para ${claveAcceso}. Receptor exterior/fallecido. ID: ${solicitud.id}`,
+      );
+
+      this.eventEmitter.emit('comprobante.anulado', {
+        claveAcceso,
+        tipoComprobante: comprobante.tipo_comprobante,
+        estadoAnterior: comprobante.estado,
+      });
+
+      return {
+        id: solicitud.id,
+        claveAcceso,
+        estado: 'ACEPTADA',
+        mensaje: 'Anulación automática procesada. El receptor es del exterior o fallecido, no se requiere aceptación.',
+      };
+    }
+
     const result = await this.db.query(
       `INSERT INTO anulacion_solicitudes (comprobante_clave_acceso, tipo_comprobante, emisor_ruc, receptor_identificacion, motivo_solicitud)
        VALUES ($1, $2, $3, $4, $5)
@@ -1159,17 +1215,53 @@ export class SriService {
   }
 
   /**
-   * Calcula días hábiles entre dos fechas (excluyendo fines de semana).
+   * Calcula días hábiles entre dos fechas (excluyendo fines de semana
+   * y feriados nacionales del Ecuador).
    */
   private calcularDiasHabiles(inicio: Date, fin: Date): number {
-    let count = 0;
-    const cur = new Date(inicio);
-    while (cur < fin) {
-      const day = cur.getDay();
-      if (day !== 0 && day !== 6) count++;
-      cur.setDate(cur.getDate() + 1);
+    return calcularDiasHabilesEcuador(inicio, fin);
+  }
+
+  /**
+   * NAC-DGERCGC25-00000017: Determina si la anulación es automática
+   * (sin requerir aceptación del receptor) cuando el receptor:
+   * - Es del exterior (tipo identificación '08')
+   * - Se encuentra registrado como "fallecido" en el Registro Civil
+   *
+   * Nota: La verificación de fallecidos requiere integración con Registro Civil.
+   * Por ahora se implementa la lógica de exterior. La verificación de fallecidos
+   * se puede agregar mediante un servicio externo o consulta a la BD de emisores.
+   */
+  private async esAnulacionAutomatica(comprobante: any): Promise<boolean> {
+    // Receptor del exterior: tipo identificación '08' (IDENTIFICACION_EXTERIOR)
+    if (comprobante.receptor_tipo_identificacion === '08') {
+      return true;
     }
-    return count;
+
+    // Receptor fallecido: verificar flag en la BD o servicio externo
+    // TODO: Integrar con Registro Civil para verificar estado de la persona
+    // Por ahora, se puede marcar manualmente via info_adicional o campo en comprobantes
+    if (comprobante.receptor_fallecido === true) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Verifica si un comprobante de retención contiene retenciones de ISD
+   * (Impuesto a la Salida de Divisas), las cuales están exentas del plazo
+   * de anulación del día 7 per NAC-DGERCGC25-00000017.
+   */
+  private async esComprobanteRetencionISD(comprobanteId: string): Promise<boolean> {
+    const result = await this.db.query(
+      `SELECT 1 FROM comprobante_retenciones cr
+       JOIN catalogo_retenciones cat ON cr.codigo = cat.codigo
+       WHERE cr.comprobante_id = $1 AND cat.tipo = 'ISD' AND cat.activo = true
+       LIMIT 1`,
+      [comprobanteId],
+    );
+    return result.rows.length > 0;
   }
 
   // ==========================================

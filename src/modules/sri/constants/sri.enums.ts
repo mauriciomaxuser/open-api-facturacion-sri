@@ -58,6 +58,7 @@ export enum CodigoPorcentajeIVA {
   IVA_5 = '5', // Materiales de construcción (Decreto Ejecutivo 198, desde abril 2024)
   IVA_NO_OBJETO = '6',
   IVA_EXENTO = '7',
+  IVA_DIFERENCIADO = '8', // IVA Diferenciado (Zonas Francas, etc.)
   IVA_15 = '4', // Vigente desde abril 2024
 }
 
