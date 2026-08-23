@@ -768,6 +768,54 @@ COMMENT ON TABLE public.webhook_logs IS 'Logs de ejecución de webhooks';
 
 
 --
+-- Name: anulacion_solicitudes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.anulacion_solicitudes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    comprobante_clave_acceso character varying(49) NOT NULL,
+    tipo_comprobante character varying(2) NOT NULL,
+    emisor_ruc character varying(13) NOT NULL,
+    receptor_identificacion character varying(20) NOT NULL,
+    estado character varying(20) DEFAULT 'PENDIENTE'::character varying NOT NULL,
+    motivo_solicitud text,
+    respuesta_motivo text,
+    respondido_at timestamp with time zone,
+    creado_at timestamp with time zone DEFAULT now(),
+    actualizado_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: TABLE anulacion_solicitudes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.anulacion_solicitudes IS 'Solicitudes de anulación con aceptación del receptor (NC, ND, Retenciones) per Resolución NAC-DGERCGC25-00000014';
+
+
+--
+-- Name: CONSTRAINT anulacion_solicitudes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.anulacion_solicitudes
+    ADD CONSTRAINT anulacion_solicitudes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: INDEX idx_anulacion_solicitudes_clave; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_anulacion_solicitudes_clave ON public.anulacion_solicitudes USING btree (comprobante_clave_acceso);
+
+
+--
+-- Name: INDEX idx_anulacion_solicitudes_estado; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_anulacion_solicitudes_estado ON public.anulacion_solicitudes USING btree (estado);
+
+
+--
 -- Data for Name: auditoria; Type: TABLE DATA; Schema: public; Owner: -
 --
 
