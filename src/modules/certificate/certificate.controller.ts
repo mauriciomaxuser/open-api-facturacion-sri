@@ -196,9 +196,14 @@ export class CertificateController {
   @ApiBody({
     schema: {
       type: 'object',
+      required: ['cert', 'password', 'ruc'],
       properties: {
         cert: { type: 'string', format: 'binary' },
         password: { type: 'string' },
+        ruc: {
+          type: 'string',
+          description: 'RUC del emisor al que se vinculará el certificado',
+        },
       },
     },
   })
@@ -404,7 +409,7 @@ export class CertificateController {
 
       // Update emisor with certificate info including the binary P12
       await this.db.query(
-        `UPDATE emisores SET 
+        `UPDATE emisores SET
           certificado_nombre = $1,
           certificado_password_encrypted = $2,
           certificado_valido_hasta = $3,

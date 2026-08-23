@@ -49,7 +49,7 @@ export class TenantsService {
 
     const result = await this.db.query(
       `SELECT t.id, t.nombre, t.plan, t.estado, t.created_at, t.updated_at,
-              (SELECT COUNT(*) FROM emisores e WHERE e.tenant_id = t.id) as emisores_count
+              (SELECT COUNT(*) FROM emisores e WHERE e.tenant_id = t.id AND e.estado = 'ACTIVO') as emisores_count
        FROM tenants t
        ${whereClause}
        ORDER BY t.id ASC
@@ -72,7 +72,7 @@ export class TenantsService {
   async findOne(id: string): Promise<TenantResponseDto> {
     const result = await this.db.query(
       `SELECT t.id, t.nombre, t.plan, t.estado, t.created_at, t.updated_at,
-              (SELECT COUNT(*) FROM emisores e WHERE e.tenant_id = t.id) as emisores_count
+              (SELECT COUNT(*) FROM emisores e WHERE e.tenant_id = t.id AND e.estado = 'ACTIVO') as emisores_count
        FROM tenants t
        WHERE t.id = $1`,
       [id],

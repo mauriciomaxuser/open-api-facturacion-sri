@@ -16,8 +16,33 @@
 #
 # Usage:
 #   docker compose -f docker-compose.prod.yml up -d
-
 services:
+  # ─── PostgreSQL ───
+  postgres:
+    image: postgres:17-alpine
+    container_name: sri-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:?DB_NAME is required}
+      POSTGRES_USER: ${DB_USER:?DB_USER is required}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/00-extensions.sql:/docker-entrypoint-initdb.d/00-extensions.sql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '5m'
+        max-file: '3'
+
   # ─── Redis (BullMQ + Cache) ───
   redis:
     image: redis:7-alpine
@@ -43,39 +68,34 @@ services:
       options:
         max-size: '5m'
         max-file: '3'
-
   # ─── Open API Facturación SRI ───
   open-api-facturacion-sri:
     # Pull from Docker Hub
     image: ${DOCKER_IMAGE:-angelobarzola/open-api-facturacion-sri:latest}
     container_name: open-api-facturacion-sri
     restart: unless-stopped
-
     # Load environment variables from file
     env_file:
       - .env.docker
-
     environment:
       # Override Redis to use compose service name
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
-
     # Port mapping (change left port if needed)
     ports:
       - '${PORT:-3001}:3001'
-
     # Data volumes - persistent storage
     volumes:
       - ${HOST_TEMPLATES_PATH:-../data/templates}:/data/templates
       - ${HOST_PDFS_PATH:-../data/pdfs}:/data/pdfs
       - ${HOST_CERTS_PATH:-../data/certs}:/data/certs
       - ${HOST_XMLS_PATH:-../data/xmls}:/data/xmls
-
     depends_on:
       redis:
         condition: service_healthy
-
+      postgres:
+        condition: service_healthy
     # Health check
     healthcheck:
       test:
@@ -91,14 +111,14 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
-
     # Logging configuration
     logging:
       driver: 'json-file'
       options:
         max-size: '10m'
         max-file: '5'
-
 volumes:
   redis_data:
+    driver: local
+  postgres_data:
     driver: local
