@@ -14,6 +14,7 @@ services:
     restart: unless-stopped
     environment:
       - CARBONE_EE_STUDIO=true
+      - TZ=America/Guayaquil
     ports:
       - '${CARBONE_PORT:-4000}:4000'
     volumes:
@@ -35,6 +36,8 @@ services:
     image: redis:7-alpine
     container_name: open-api-redis
     restart: unless-stopped
+    environment:
+      - TZ=America/Guayaquil
     command: >
       /bin/sh -c '
       if [ -n "${REDIS_PASSWORD:-}" ]; then
