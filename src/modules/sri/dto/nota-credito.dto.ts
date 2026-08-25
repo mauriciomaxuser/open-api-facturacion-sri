@@ -39,6 +39,11 @@ export class DetalleNotaCreditoDto {
   @IsNotEmpty()
   descripcion: string;
 
+  @ApiPropertyOptional({ description: 'Unidad de medida del producto o servicio' })
+  @IsOptional()
+  @IsString()
+  unidadMedida?: string;
+
   @ApiProperty({ description: 'Cantidad' })
   @IsNumber()
   @Min(0)
