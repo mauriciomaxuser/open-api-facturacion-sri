@@ -1,21 +1,6 @@
 # =================================================
 # Docker Compose for Production Server
 # =================================================
-# This file goes on your SERVER - no source code needed!
-#
-# Recommended structure on server:
-#   /opt/
-#   ├── open-api-facturacion-sri/           ← Deploy folder
-#   │   ├── docker-compose.prod.yml
-#   │   └── .env.docker
-#   └── data/                  ← Data folder (OUTSIDE deploy)
-#       ├── templates/
-#       ├── pdfs/
-#       ├── certs/
-#       └── xmls/
-#
-# Usage:
-#   docker compose -f docker-compose.prod.yml up -d
 services:
   # ─── PostgreSQL ───
   postgres:
@@ -60,7 +45,6 @@ services:
       --save 60 1000
     volumes:
       - redis_data:/data
-    # No exponer puertos al host en producción — solo acceso interno
     healthcheck:
       test:
         [
@@ -78,29 +62,47 @@ services:
       options:
         max-size: '5m'
         max-file: '3'
+
+  # ─── Carbone.io (Generación de PDFs) ───
+  carbone:
+    image: carbone/carbone-ee:latest
+    container_name: open-api-carbone
+    restart: unless-stopped
+    environment:
+      - CARBONE_EE_STUDIO=true
+      - TZ=America/Guayaquil
+    volumes:
+      - ${HOST_TEMPLATES_PATH:-../data/templates}:/app/template
+    healthcheck:
+      test: ['CMD-SHELL', 'bash -c "echo > /dev/tcp/localhost/4000"']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '5m'
+        max-file: '2'
+
   # ─── Open API Facturación SRI ───
   open-api-facturacion-sri:
-    # Pull from Docker Hub
     image: ${DOCKER_IMAGE:-angelobarzola/open-api-facturacion-sri:latest}
     container_name: open-api-facturacion-sri
     restart: unless-stopped
-    # DNS explícito para evitar EAI_AGAIN al resolver dominios del SRI
     dns:
       - 8.8.8.8
       - 1.1.1.1
-    # Load environment variables from file
     env_file:
       - .env.docker
     environment:
       TZ: America/Guayaquil
-      # Override Redis to use compose service name
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
-    # Port mapping (change left port if needed)
+      CARBONE_API: http://carbone:4000
     ports:
-      - '${PORT:-3001}:3001'
-    # Data volumes - persistent storage
+      - '127.0.0.1:${PORT:-3001}:3001'
     volumes:
       - ${HOST_TEMPLATES_PATH:-../data/templates}:/data/templates
       - ${HOST_PDFS_PATH:-../data/pdfs}:/data/pdfs
@@ -111,7 +113,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-    # Health check
+      carbone:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -126,7 +129,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
-    # Logging configuration
     logging:
       driver: 'json-file'
       options:
